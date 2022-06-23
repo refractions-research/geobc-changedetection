@@ -88,7 +88,7 @@ def runapp():
     print_summary();
 
 def process_all_providers():
-    provider_dict = cd.load_json(cd.sample_config)
+    provider_dict = cd.load_json(cd.provider_config)
     providers = provider_dict.keys()
     
     for provider in providers:
@@ -102,7 +102,7 @@ def process_provider(provider_name):
     pproviders.append(info)
     
     try:
-        provider_dict = cd.load_json(cd.sample_config)
+        provider_dict = cd.load_json(cd.provider_config)
         if not provider_name in provider_dict.keys():
             logger.error(f"""No configuration for {provider_name} found.""")
             info.setStatus(cd.ProcessingStatus.NOT_PROCESSED, f"No details found for {provider_name} in configuration file.")
@@ -196,7 +196,12 @@ def print_summary():
 
 if __name__ == '__main__':
     logger.debug(f"PROJ_LIB directory: {os.environ['PROJ_LIB']}")
-    logger.debug(f"Data Directory: {cd.dataload_dir}")
+    logger.debug(f"Provider Configuration: {cd.provider_config}")
+    logger.debug(f"Change Log Database: {cd.provider_db}")
+    logger.debug(f"Log Output: {cd.log_folder}")
+    logger.debug(f"Geopackage Output Folder: {cd.output_folder}")
+    logger.debug(f"Data Staging Folder: {cd.data_staging_folder}")
+
     runapp()
 
 

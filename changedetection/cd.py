@@ -1,7 +1,7 @@
 # module of common functions and variables for 
 # Change Detection Script
 
-import os, json, traceback, sys, csv, datetime
+import json, datetime, configparser, argparse
 from enum import Enum
 
 # Processing status values for provider
@@ -29,23 +29,32 @@ class DataStatistic(Enum):
     NUM_FEATURES_ATTRIBUTE_CHANGES = 'num_feature_changed'
     TOTAL_CHANGES = 'total_changes'
     
-# configuration and reference filepaths
-main_dir = os.path.dirname(os.path.abspath(__file__)) #Relative path of this file (main folder of project)
-provider_config = os.path.join(main_dir, 'config', 'provider_config.json') #provider configuration file
-sample_config = os.path.join(main_dir, 'config', 'sample_config.json') #sample config for testing and sample scripts
-
-dataload_dir = os.path.abspath(os.path.join(main_dir, os.pardir, 'data'))
- 
-provider_db = os.path.join(dataload_dir, 'Road_Provider_Changes_PROD.db3') #Production database - use for full compare of all tracked datasets
-log_folder =  os.path.join(dataload_dir,'logs')
-output_folder =  os.path.join(dataload_dir, 'output')
-data_staging_folder =  os.path.join(dataload_dir, 'raw')
 
 #projection for storing all data
 bc_albers_epsg = 3005
 
 #run date and time for logging filename
 rundatetime = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
+
+#initialize configuration variables for config.ini file
+configfile = "config.ini"
+
+parser = argparse.ArgumentParser(description='Run automated dataset change detection.')
+parser.add_argument('-c', type=str, help='the configuration file', required=False);
+parser.add_argument('args', type=str, nargs='*');
+args = parser.parse_args()
+if (args.c):
+    configfile = args.c
+    
+config = configparser.ConfigParser()
+config.read(configfile)
+    
+provider_config = config['CHANGE_DETECTION']['provider_config']
+provider_db = config['CHANGE_DETECTION']['database_file']
+log_folder = config['CHANGE_DETECTION']['log_folder']
+output_folder = config['CHANGE_DETECTION']['geopackage_output_folder']
+data_staging_folder = config['CHANGE_DETECTION']['data_staging_folder']
+
 
 # converts data between JSON and python objects
 def load_json(jf):

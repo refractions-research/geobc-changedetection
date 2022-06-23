@@ -196,7 +196,7 @@ def detect_changes(
             provider_attribute_fields,
             provider_reference_fields,
         )
-
+        
         #compute stats
         cursor = db_connection.cursor()
         try:
@@ -433,7 +433,7 @@ def load_data_and_compute_hash(
     sql_insert += "?, ?, ?, ?)"  
         
     while feature:
-            # Identify the value of the unique FID in the source data
+        # Identify the value of the unique FID in the source data
         provider_Primary_Key_value = feature.GetFID()
 
         # Initiate list of values to replace ? placeholders in sql_insert statement.
@@ -492,7 +492,7 @@ def load_data_and_compute_hash(
             cursor.close()
         # Destroy the current GetNextFeature object
         feature.Destroy()
-
+    
         # Create the next GetNextFeature object to iterate through features
         feature = layer.GetNextFeature()
         
