@@ -17,9 +17,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      run: docker build . --file Dockerfile --tag changedetection
     - name: export image
-      run: mkdir staging && docker save -o staging/my-image-name.tar my-image-name
+      run: mkdir staging && docker save -o staging/changedetection.tar changedetection
     - uses: actions/upload-artifact@v2
       with:
         name: docker-image
