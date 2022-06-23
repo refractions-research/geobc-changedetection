@@ -75,9 +75,9 @@ class ProviderStatus:
 pproviders = []
 
 def runapp():
-    #process_all_providers()
+    process_all_providers()
     
-    process_provider("District of Saanich Parks")
+    #process_provider("District of Saanich Parks")
     #process_provider("District of Saanich")
     #process_provider("District of North Vancouver")
     #process_provider("Kamloops")
