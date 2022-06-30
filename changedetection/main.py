@@ -12,12 +12,11 @@
 # Licence:     <your licence>
 #-------------------------------------------------------------------------------
 
-import cd
+import utils
 import os
 import datetime
 import logging
 import change_detector
-import get_file_from_URL
 
 #TODO functions. 
 '''
@@ -51,7 +50,7 @@ consolehandler.setFormatter(formatter)
 logger.addHandler(consolehandler)
 
 # file handler - all messages
-fileloghandler = logging.FileHandler(os.path.join(cd.log_folder, "Change_Detection_Processing_" + cd.rundatetime + ".txt"), mode='a', encoding="utf-8",)
+fileloghandler = logging.FileHandler(os.path.join(utils.log_folder, "Change_Detection_Processing_" + utils.rundatetime + ".txt"), mode='a', encoding="utf-8",)
 fileloghandler.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 fileloghandler.setFormatter(formatter)
@@ -63,7 +62,7 @@ class ProviderStatus:
     
     def __init__(self, provider_name):
         self.provider_name = provider_name
-        self.status = cd.ProcessingStatus.NOT_PROCESSED
+        self.status = utils.ProcessingStatus.NOT_PROCESSED
     
     def setStatus(self, status, message, stats=[]):
         self.status = status
@@ -88,7 +87,7 @@ def runapp():
     print_summary();
 
 def process_all_providers():
-    provider_dict = cd.load_json(cd.provider_config)
+    provider_dict = utils.load_json(utils.provider_config)
     providers = provider_dict.keys()
     
     for provider in providers:
@@ -102,23 +101,23 @@ def process_provider(provider_name):
     pproviders.append(info)
     
     try:
-        provider_dict = cd.load_json(cd.provider_config)
+        provider_dict = utils.load_json(utils.provider_config)
         if not provider_name in provider_dict.keys():
             logger.error(f"""No configuration for {provider_name} found.""")
-            info.setStatus(cd.ProcessingStatus.NOT_PROCESSED, f"No details found for {provider_name} in configuration file.")
+            info.setStatus(utils.ProcessingStatus.NOT_PROCESSED, f"No details found for {provider_name} in configuration file.")
             return
         
         url = provider_dict[provider_name].get('url')
         if (not url):
             logger.warning(f"""No URL for {provider_name} in configuration file. Provider not processed.""")
-            info.setStatus(cd.ProcessingStatus.NOT_PROCESSED, f"No URL for {provider_name} in configuration file.")
+            info.setStatus(utils.ProcessingStatus.NOT_PROCESSED, f"No URL for {provider_name} in configuration file.")
             return
             
         
         #Only get data where there is a URLcreate a folder to stage the data load
-        provider_db = cd.provider_db
-        log_folder_path = cd.log_folder
-        output_folder_path = cd.output_folder
+        provider_db = utils.provider_db
+        log_folder_path = utils.log_folder
+        output_folder_path = utils.output_folder
         
         dataset_name = provider_dict[provider_name].get('dataset_name')
         database_name = provider_dict[provider_name].get('database_name')
@@ -127,13 +126,13 @@ def process_provider(provider_name):
         reference_fields = [] # TODO Not currently configured - set to empty list for intitial testing
     
         date_string = str(datetime.date.today()).replace('-', '_')
-        staging_folder =  os.path.join(cd.data_staging_folder, provider_name.replace(' ','_') + '_' + date_string)
+        staging_folder =  os.path.join(utils.data_staging_folder, provider_name.replace(' ','_') + '_' + date_string)
         
         try:
-            get_file_from_URL.getfile(url, dataset_name, staging_folder)
+            utils.get_file(url, dataset_name, staging_folder)
         except Exception as e:
             #some error occurred and we don't want to continue
-            info.setStatus(cd.ProcessingStatus.ERROR, f"Data download failed: {e}")
+            info.setStatus(utils.ProcessingStatus.ERROR, f"Data download failed: {e}")
             logger.error(f"""Could not download data for {provider_name}""")
             return
         
@@ -149,11 +148,11 @@ def process_provider(provider_name):
                 compare_fields,
                 reference_fields,
         )
-        info.setStatus(cd.ProcessingStatus.PROCESS_OK, "", stats)
+        info.setStatus(utils.ProcessingStatus.PROCESS_OK, "", stats)
         
             
     except Exception as e:
-        info.setStatus(cd.ProcessingStatus.ERROR, f"Error while processing {provider_name}: " + str(e))
+        info.setStatus(utils.ProcessingStatus.ERROR, f"Error while processing {provider_name}: " + str(e))
         logger.error(f"Error processing {provider_name}", exc_info=e)
     
         
@@ -172,7 +171,7 @@ def print_summary():
     for provider in pproviders:
         logstr += "------------------------------------------------------------------------\n"
         logstr += f"{provider.provider_name} Statistics \n"
-        logstr += cd.format_statistics(provider.stats)
+        logstr += utils.format_statistics(provider.stats)
         logstr += "\n\n"
         
     
@@ -181,9 +180,9 @@ def print_summary():
     print(logstr)
     
     #write to file
-    log_file_name = f"Change_Detection_Processing_SUMMARY_{cd.rundatetime}.txt"
+    log_file_name = f"Change_Detection_Processing_SUMMARY_{utils.rundatetime}.txt"
 
-    log_file = os.path.join(cd.log_folder, log_file_name)
+    log_file = os.path.join(utils.log_folder, log_file_name)
     processing_log = open(log_file, "w")
     try:
         processing_log.write(logstr)
@@ -196,11 +195,11 @@ def print_summary():
 
 if __name__ == '__main__':
     logger.debug(f"PROJ_LIB directory: {os.environ['PROJ_LIB']}")
-    logger.debug(f"Provider Configuration: {cd.provider_config}")
-    logger.debug(f"Change Log Database: {cd.provider_db}")
-    logger.debug(f"Log Output: {cd.log_folder}")
-    logger.debug(f"Geopackage Output Folder: {cd.output_folder}")
-    logger.debug(f"Data Staging Folder: {cd.data_staging_folder}")
+    logger.debug(f"Provider Configuration: {utils.provider_config}")
+    logger.debug(f"Change Log Database: {utils.provider_db}")
+    logger.debug(f"Log Output: {utils.log_folder}")
+    logger.debug(f"Geopackage Output Folder: {utils.output_folder}")
+    logger.debug(f"Data Staging Folder: {utils.data_staging_folder}")
 
     runapp()
 

@@ -7,8 +7,8 @@ import shutil
 import os
 import datetime
 from osgeo import ogr
-import get_file_from_URL
-import cd
+
+import utils
 
 #* CHECKS FOR VALID URL AND RETURNS LIST OF FIELD NAMES FOR DATASET
 def confirm_url_get_schema(url, dataset_name, database_name, data_type, is_rest):
@@ -23,14 +23,14 @@ def confirm_url_get_schema(url, dataset_name, database_name, data_type, is_rest)
         Returns list of: [Boolean success], [list of field names], [message string] 
     """
     datestamp = str(datetime.date.today()).replace('-', '_')
-    temp_folder =  os.path.join(cd.dataload_dir, f'url_test_{datestamp}')
+    temp_folder =  os.path.join(utils.data_staging_folder, f'url_test_{datestamp}')
     if os.path.exists(temp_folder):
         shutil.rmtree(temp_folder)
     os.mkdir(temp_folder)
 
     #Attempt to download package to temp folder
     #TODO NEED TO ADD error/success messages returned from get_file_from_url function
-    response, response_code, request_error = get_file_from_URL.getfile(url,is_rest,dataset_name,temp_folder)
+    response, response_code, request_error = utils.get_file(url,is_rest,dataset_name,temp_folder)
     
     print(f"            [{response_code}]{response}")
     if not request_error is None:
@@ -341,8 +341,8 @@ def main():
     #>Loads existing Provider Dictionary
     #TODO: switch to environment passed to main then select correct config
     
-    config_json = cd.provider_config
-    pd = cd.load_json(config_json) 
+    config_json = utils.provider_config
+    pd = utils.load_json(config_json) 
     # User selects new provider or selects to add a new provider
     add_new = True
     while add_new:
@@ -363,7 +363,7 @@ def main():
         #User input for delete provider
         elif provider == "REMOVE PROVIDER":
             provider = easygui.choicebox("Pick a provider to remove", "Delete Provider", provider_list)
-            #If confirm delete test successful, deletes provider config
+            #If confirm delete py successful, deletes provider config
             if confirm_delete(provider):
                 print(f"DELETING CONFIGURATION FOR {provider}")
                 del pd[provider]
@@ -371,7 +371,7 @@ def main():
                 add_new = False
 
                 #! Exits loop after deleting provider
-                cd.dump_json(pd, config_json)
+                utils.dump_json(pd, config_json)
                 msg = f"Provider configuration deleted for {provider}, update another provider?"
                 run_prog = easygui.boolbox(msg, "Continue Updates", ["Continue", "Exit"])
                 return run_prog
@@ -455,7 +455,7 @@ def main():
                 "compare_fields": compare_fields,
                 "Schedule": is_sched}
             })
-        cd.dump_json(pd, config_json)
+        utils.dump_json(pd, config_json)
 
     # User input indicating program exit or re-run on another provider
     msg = f"Provider configuration finished for {provider}, update another provider?"

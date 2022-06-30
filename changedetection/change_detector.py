@@ -34,7 +34,7 @@ from osgeo import ogr, osr
 import sqlite3
 import datetime
 import logging
-import cd
+import utils
 
 
 # -------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ def detect_changes(
         None
         
     Returns:
-        Dictionary of processing statistics. See cd.DataStatistic for statistics tracked
+        Dictionary of processing statistics. See utils.DataStatistic for statistics tracked
     """
     
     providerstats = {}
@@ -158,68 +158,71 @@ def detect_changes(
 
     # Add new data as table to sqlite database with hash attributes,
     # or identify the table if it already exists with today's data
-    new_table = load_data_and_compute_hash(
+    
+    new_table = f"{provider_name}_{date_string}"
+    load_data_and_compute_hash(
         db_connection,
-        provider_name,
+        new_table,
         source_data_path,
         source_database_name,
-        source_dataset_name,
         source_data_type,
         provider_attribute_fields,
         provider_reference_fields,
     )
-    providerstats[cd.DataStatistic.NEW_DATA_TABLE] = new_table
+    providerstats[utils.DataStatistic.NEW_DATA_TABLE] = new_table
     
     # Identify features with duplicates (same geometry and attributes)
     # in the new table
     duplicate_features = find_duplicate_features(db_connection, new_table)
-    providerstats[cd.DataStatistic.NUM_DUPLICATE_RECORDS] = len(duplicate_features[0])
-    providerstats[cd.DataStatistic.DUPLICATE_RECORDS] = duplicate_features[1]
+    providerstats[utils.DataStatistic.NUM_NEW_DUPLICATE_RECORDS] = len(duplicate_features[0])
+    providerstats[utils.DataStatistic.NEW_DUPLICATE_RECORDS] = duplicate_features[1]
     logger.debug(duplicate_features[1])
 
     # Identify most recent existing version of data to compare with new version,
     # or return null value if no other versions exist
     old_table = identify_old_table(db_connection, provider_name)
-    providerstats[cd.DataStatistic.OLD_DATA_TABLE] = old_table
+    providerstats[utils.DataStatistic.OLD_DATA_TABLE] = old_table
+    
     
     # Compare old and new versions of data
     if old_table:
+        
+        duplicate_features = find_duplicate_features(db_connection, old_table)
+        providerstats[utils.DataStatistic.NUM_OLD_DUPLICATE_RECORDS] = len(duplicate_features[0])
+        providerstats[utils.DataStatistic.OLD_DUPLICATE_RECORDS] = duplicate_features[1]
+    
         # Compare the two tables for changes
         #comparison_object = compare_tables(db_connection, new_table, old_table)
+        logger.info(f"Creating and populating change table for {provider_name}")
+    
+        # Extract date of each table, format "YYYYMMDD"
+        old_table_date = old_table[-10:].replace("_", "")
+        new_table_date = new_table[-10:].replace("_", "")
 
+        # Define name of change summary table
+        # Format: ProviderName_fromYYYYMMDD_toYYYYMMDD
+        # eg. Mission_from20210312_to20211017
+        change_summary_table_name = f"{provider_name}_from{old_table_date}_to{new_table_date}"
+        
         # Create and populate change summary table
         change_table = create_and_populate_change_summary_table(
             db_connection,
-            provider_name,
             new_table,
+            new_table_date,
             old_table,
+            old_table_date,
+            change_summary_table_name,
             provider_attribute_fields,
             provider_reference_fields,
         )
         
         #compute stats
-        cursor = db_connection.cursor()
-        try:
-            providerstats[cd.DataStatistic.NUM_NEW_RECORDS] = cursor.execute(f"SELECT count(*) FROM {new_table}").fetchone()[0]
-            providerstats[cd.DataStatistic.NUM_OLD_RECORDS] = cursor.execute(f"SELECT count(*) FROM {old_table}").fetchone()[0]
+        compute_stats(db_connection, new_table, old_table, change_table, providerstats)
             
-            counts = cursor.execute(f"SELECT count(*), {change_type_fieldname} FROM {change_table} GROUP BY {change_type_fieldname}").fetchall()
-            cnt = 0;
-            for field in counts:
-                cnt = cnt + field[0]
-                if (field[1].lower() == cd.ChangeType.NEW_FEATURE.value):
-                    providerstats[cd.DataStatistic.NUM_NEW_FEATURES] = field[0]
-                elif (field[1].lower() == cd.ChangeType.REMOVED_FEATURE.value):
-                    providerstats[cd.DataStatistic.NUM_REMOVED_FEATURES] = field[0]
-                elif (field[1].lower() == cd.ChangeType.UPDATED_ATTRIBUTES.value):
-                    providerstats[cd.DataStatistic.NUM_FEATURES_ATTRIBUTE_CHANGES] = field[0]
-            providerstats[cd.DataStatistic.TOTAL_CHANGES] = cnt
-            
-        finally:
-            cursor.close()
-            
-            
-        export_change_table(change_table,provider_name, db_connection,output_folder_path)
+        
+        logger.info(f"Exporting change table for {provider_name}")
+        gpkg_file_name = os.path.join(output_folder_path, provider_name + "_" + date_string + '_Changes.gpkg')
+        export_change_table(change_table, db_connection, gpkg_file_name)
         
 
     else:
@@ -240,6 +243,27 @@ def detect_changes(
     
     return providerstats
 
+def compute_stats(db_connection, new_table, old_table, change_table, providerstats):
+    
+    cursor = db_connection.cursor()
+    try:
+        providerstats[utils.DataStatistic.NUM_NEW_RECORDS] = cursor.execute(f"SELECT count(*) FROM {new_table}").fetchone()[0]
+        providerstats[utils.DataStatistic.NUM_OLD_RECORDS] = cursor.execute(f"SELECT count(*) FROM {old_table}").fetchone()[0]
+            
+        counts = cursor.execute(f"SELECT count(*), {change_type_fieldname} FROM {change_table} GROUP BY {change_type_fieldname}").fetchall()
+        cnt = 0;
+        for field in counts:
+            cnt = cnt + field[0]
+            if (field[1].lower() == utils.ChangeType.NEW_FEATURE.value):
+                providerstats[utils.DataStatistic.NUM_NEW_FEATURES] = field[0]
+            elif (field[1].lower() == utils.ChangeType.REMOVED_FEATURE.value):
+                providerstats[utils.DataStatistic.NUM_REMOVED_FEATURES] = field[0]
+            elif (field[1].lower() == utils.ChangeType.UPDATED_ATTRIBUTES.value):
+                providerstats[utils.DataStatistic.NUM_FEATURES_ATTRIBUTE_CHANGES] = field[0]
+        providerstats[utils.DataStatistic.TOTAL_CHANGES] = cnt
+            
+    finally:
+        cursor.close()
 # -------------------------------------------------------------------------------
 # FUNCTIONS
 # -------------------------------------------------------------------------------
@@ -274,10 +298,9 @@ def scrub(dirty_string):
 
 def load_data_and_compute_hash(
     db_connection,
-    provider_name,
+    table_name,
     source_data_path,
-    source_database_name,
-    source_dataset_name,
+    source_data_layer,
     source_data_type,
     provider_attribute_fields,
     provider_reference_fields,
@@ -289,16 +312,14 @@ def load_data_and_compute_hash(
     Parameters:
         db_connection (connection object)
             - Connection to sqlite database
-        provider_name (string)
-            - Unique name of data provider (eg. "Mission")
+        table_name
+            - Name of database table to load data inot
         source_data_path (string)
             - Full path to data (eg. shapefile) or database
-        source_database_name (string)
-            - Name of the database - used only to determine how to create the ogr layer
-        source_dataset_name (string)
+        source_data_layer (string)
             - Name of the dataset (only used by function when dataset is in a database)
         source_data_type (string)
-            - OGR file type
+            - Can be None or OGR file type
         provider_attribute_fields (list of strings)
             - List of attribute fields used to create attribute hash
         provider_reference_Fields (list of strings)
@@ -313,7 +334,7 @@ def load_data_and_compute_hash(
         change_detect_fields (list of strings)
             - List of fields used for change detection (defined in runapp())
         bc_albers_epsg
-            - EPSG code for BC Albers (defined in cd)
+            - EPSG code for BC Albers (defined in utils)
 
     Returns:
         new_table (string)
@@ -327,21 +348,20 @@ def load_data_and_compute_hash(
             - When error occurs reading data or loading data
     """
 
-    logger.info("Loading raw data for dataset %s", source_dataset_name)
-    logger.debug("Source Data Type: %s", source_data_type)
+    logger.info("Loading raw data for dataset %s into table %s", source_data_path, table_name)
     logger.debug("Source Path: %s", source_data_path)
-    logger.debug("Source Database: %s", source_database_name)
+    logger.debug("Source Layer: %s", source_data_layer)
+    logger.debug("Source Data Type: %s", source_data_type)
+    
     
     # Check if a table exists with today's date
-    new_table = f"{provider_name}_{date_string}"
-    logger.debug("checking for existing table: %s", new_table)
-    
+    logger.debug("checking for existing table: %s", table_name)
     cursor = db_connection.cursor()
     try:
         table_check = cursor.execute(f"""
             SELECT name 
             FROM sqlite_master
-            WHERE type='table' AND name='{new_table}'"""
+            WHERE type='table' AND name='{table_name}'"""
         ).fetchone()
     finally:
         cursor.close()
@@ -349,27 +369,32 @@ def load_data_and_compute_hash(
     # Create table already exists; remove it and reload data
     if table_check:
         #drop existing table before loading new data
-        logger.debug("table %s will be dropped and reloaded", new_table)
+        logger.debug("table %s will be dropped and reloaded", table_name)
         
         cursor = db_connection.cursor()
         try:
-            cursor.execute(f"drop table {new_table}")
+            cursor.execute(f"drop table {table_name}")
         finally:
             cursor.close
         db_connection.commit()
         
     #if not table_check:
-    logger.debug("creating table: %s ", new_table)
+    logger.debug("creating table: %s ", table_name)
     create_provider_data_table(
         db_connection, 
-        new_table, 
+        table_name, 
         provider_attribute_fields, 
         provider_reference_fields
     )
 
     # Get provider data from source
-    driver = ogr.GetDriverByName(source_data_type) 
-    data_source = driver.Open(source_data_path)
+    data_source = None
+    if (source_data_type is None):
+        data_source = utils.find_data_source(source_data_path)
+    else:
+        driver = ogr.GetDriverByName(source_data_type) 
+        data_source = driver.Open(source_data_path)
+        
     if data_source is None:
         msg = f"""Unable to open dataset (type: {source_data_type}, location: {source_data_path})"""
         logger.error(msg)
@@ -384,8 +409,8 @@ def load_data_and_compute_hash(
     # Generate well-known-text and hash values and populate table
     # If the datasource is in a database - specify layer name,
     # for a file there will be only one layer
-    if source_database_name:
-        layer = data_source.GetLayer(source_dataset_name)
+    if source_data_layer is not None:
+        layer = data_source.GetLayer(source_data_layer)
     else:
         layer = data_source.GetLayer()
     
@@ -403,7 +428,7 @@ def load_data_and_compute_hash(
     
     #target BC Albers    
     crs_target = osr.SpatialReference()
-    crs_target.ImportFromEPSG(cd.bc_albers_epsg)
+    crs_target.ImportFromEPSG(utils.bc_albers_epsg)
     
     crs_source = layer.GetSpatialRef()
     
@@ -426,7 +451,7 @@ def load_data_and_compute_hash(
     
     
         
-    sql_insert = f"INSERT INTO {new_table} VALUES (?, ?,"
+    sql_insert = f"INSERT INTO {table_name} VALUES (?, ?,"
     for field in all_provider_fields:
         sql_insert += "?, "  # Add placeholder to sql insert statement for each field
     # Add placeholders for new fields (Geometry_WKT, Attribute Hash, Geom_Hash, Full_Hash)
@@ -499,7 +524,7 @@ def load_data_and_compute_hash(
     db_connection.commit()
     logger.debug("Done generating wkt, hashes, and populating table.")
     
-    return new_table
+    return table_name
 
 
 def create_provider_data_table(
@@ -781,9 +806,11 @@ def identify_old_table(db_connection, provider_name):
 
 def create_and_populate_change_summary_table(
     db_connection,
-    provider_name,
     new_table,
+    new_table_field_suffix,
     old_table,
+    old_table_field_suffix,
+    change_table,
     provider_attribute_fields,
     provider_reference_fields,
 ):
@@ -794,14 +821,16 @@ def create_and_populate_change_summary_table(
     Parameters:
         db_connection (connection object)
             - Connection to sqlite database
-        provider_name (string)
-            - Unique name of data provider (eg. "Mission")
-        new_table (string)
-            - Name of new table
-        old_table (string)
-            - Name of the old table
-        comparison_object (tuple of sets)
-            - Full hashes of features in new/old tables with attribute-only/geometry changes
+        new table
+            - Name of table with new data
+        new_table_field_suffix
+            - Attribute field suffix for new data attribute
+        old_table
+            - Name of old data table
+        old_table_field_suffix
+            -Attribute field suffix for old data attribute
+        chage_table
+            - Name of output change table
         provider_attribute_fields (list of strings) (optional)
             - List of attribute fields used to create attribute hash
         provider_reference_fields (list of strings)
@@ -816,16 +845,9 @@ def create_and_populate_change_summary_table(
         n/a
     """
     
-    logger.info(f"Creating and populating change table for {provider_name}")
+    logger.info(f"Creating and populating table for {change_table}")
 
-    # Extract date of each table, format "YYYYMMDD"
-    old_table_date = old_table[-10:].replace("_", "")
-    new_table_date = new_table[-10:].replace("_", "")
 
-    # Define name of change summary table
-    # Format: ProviderName_fromYYYYMMDD_toYYYYMMDD
-    # eg. Mission_from20210312_to20211017
-    change_summary_table_name = f"{provider_name}_from{old_table_date}_to{new_table_date}"
 
     # Check if change summary table exists in database.
     # If it exists, rename the existing copy with _backup# suffix.
@@ -834,7 +856,7 @@ def create_and_populate_change_summary_table(
         table_check = cursor.execute(
             """SELECT name FROM sqlite_master
             WHERE type='table' AND name=?""",
-            ([change_summary_table_name]),
+            ([change_table]),
         ).fetchone()
     finally:
         cursor.close()
@@ -844,7 +866,7 @@ def create_and_populate_change_summary_table(
         backup_table_check = True
         i = 1
         while backup_table_check:
-            backup_table_name = f"{change_summary_table_name}_backup{str(i)}"
+            backup_table_name = f"{change_table}_backup{str(i)}"
             
             cursor = db_connection.cursor()
             try:    
@@ -856,7 +878,7 @@ def create_and_populate_change_summary_table(
                 i += 1
             finally:
                 cursor.close()
-        sql_alter = f"ALTER TABLE {change_summary_table_name} " f"RENAME TO {backup_table_name}"
+        sql_alter = f"ALTER TABLE {change_table} " f"RENAME TO {backup_table_name}"
         
         cursor = db_connection.cursor()
         try:
@@ -867,8 +889,8 @@ def create_and_populate_change_summary_table(
 
     # Create list of text fields for change summary table
     table_text_fields = provider_reference_fields + provider_attribute_fields
-    old_data_fields = [f"{fieldname}_{old_table_date}" for fieldname in table_text_fields]
-    new_data_fields = [f"{fieldname}_{new_table_date}" for fieldname in table_text_fields]
+    old_data_fields = [f"{fieldname}_{old_table_field_suffix}" for fieldname in table_text_fields]
+    new_data_fields = [f"{fieldname}_{new_table_field_suffix}" for fieldname in table_text_fields]
     
     change_summary_table_text_fields = old_data_fields + new_data_fields
     change_summary_table_text_fields.append(geom_wkt_fieldname)
@@ -876,7 +898,7 @@ def create_and_populate_change_summary_table(
     # Create the change summary table
     create_sqlite_table(
         db_connection,
-        change_summary_table_name,
+        change_table,
         change_summary_id_fieldname,
         2,
         change_summary_table_text_fields,
@@ -896,9 +918,9 @@ def create_and_populate_change_summary_table(
     
     # find features that have been removed
     query = f"""
-        insert into {change_summary_table_name} 
+        insert into {change_table} 
         ({type},{oldchangefields},{geom_wkt_fieldname})
-        SELECT '{cd.ChangeType.REMOVED_FEATURE.value}', {arawfields}, a.{geom_wkt_fieldname}
+        SELECT '{utils.ChangeType.REMOVED_FEATURE.value}', {arawfields}, a.{geom_wkt_fieldname}
         FROM {old_table} a
         WHERE a.{geom_hash_fieldname} NOT IN (
         select b.{geom_hash_fieldname} FROM {new_table} b) 
@@ -911,9 +933,9 @@ def create_and_populate_change_summary_table(
     
     # find new features 
     query = f"""
-        insert into {change_summary_table_name} 
+        insert into {change_table} 
         ({type},{newchangefields},{geom_wkt_fieldname})
-        SELECT '{cd.ChangeType.NEW_FEATURE.value}', {brawfields}, b.{geom_wkt_fieldname}
+        SELECT '{utils.ChangeType.NEW_FEATURE.value}', {brawfields}, b.{geom_wkt_fieldname}
         FROM {new_table} b
         WHERE b.{geom_hash_fieldname} NOT IN (
         select a.{geom_hash_fieldname} FROM {old_table} a) 
@@ -926,9 +948,9 @@ def create_and_populate_change_summary_table(
 
     #same geometry difference attributes
     query = f"""
-        insert into {change_summary_table_name} 
+        insert into {change_table} 
         ({type},{oldchangefields},{newchangefields},{geom_wkt_fieldname})
-        SELECT '{cd.ChangeType.UPDATED_ATTRIBUTES.value}', {arawfields}, {brawfields}, a.{geom_wkt_fieldname}
+        SELECT '{utils.ChangeType.UPDATED_ATTRIBUTES.value}', {arawfields}, {brawfields}, a.{geom_wkt_fieldname}
         FROM {new_table} a join {old_table} b on a.{geom_hash_fieldname} = b.{geom_hash_fieldname}
         WHERE a.{attribute_hash_fieldname} != b.{attribute_hash_fieldname}    
     """
@@ -941,33 +963,31 @@ def create_and_populate_change_summary_table(
     db_connection.commit()
 
 
-    return change_summary_table_name;
+    return change_table;
 
 
-def export_change_table(change_table, provider_name, db_connection, output_folder_path):
+def export_change_table(change_table, db_connection, gpkg_file_name):
     """
     Export Changes to geopackage file
 
     Parameters:
         change_table (string)
-            - Name of change table to be exported for review
-        provider_name(string)
-            - string used to create output folder and GIS datasets            
+            - Name of change table to be exported for review            
         db_connection (connection object)
             - Connection to sqlite database
-        output_folder_path(string)
-            - Root location for output
+        gpkg_file_name(string)
+            - Output file name
 
     Dependencies (global variables):
         date_string (string)
             - string used to create output folder
         bc_albers_epsg
-            - BC Albers EPSG code (defined in cd)
+            - BC Albers EPSG code (defined in utils)
     Returns:
         
     """
     
-    logger.debug(f"exporting changes for {provider_name} to {output_folder_path}")
+    logger.info(f"exporting changes to {gpkg_file_name}")
     
     rowcount = 0
     cursor = db_connection.cursor()
@@ -982,7 +1002,6 @@ def export_change_table(change_table, provider_name, db_connection, output_folde
     
         #Create new empty geopackage with today's date
         #TODO: Get geometry type from data - currently hard coded to MULTILINESTRING
-        gpkg_file_name = os.path.join(output_folder_path, provider_name + "_" + date_string + '_Changes.gpkg') 
         logger.debug(f"export file: {gpkg_file_name}")
         
         if os.path.exists(gpkg_file_name):
@@ -994,7 +1013,7 @@ def export_change_table(change_table, provider_name, db_connection, output_folde
             
         #everything gets written as BC Albers
         srs = osr.SpatialReference()
-        srs.ImportFromEPSG(cd.bc_albers_epsg)
+        srs.ImportFromEPSG(utils.bc_albers_epsg)
             
         #layer per geometry type
         #merge all single types into their multitypes
@@ -1067,7 +1086,7 @@ def export_change_table(change_table, provider_name, db_connection, output_folde
             cursor.close()
         logger.debug(f"""The table {change_table} successfully exported to {gpkg_file_name}""")
     else:
-        logger.debug(f"""The table {change_table} is empty - no output geopackage created for {provider_name}""")
+        logger.debug(f"""The table {change_table} is empty - no output geopackage created""")
 
 
 
@@ -1090,13 +1109,13 @@ def write_log_file(log_folder_path, provider_name, stats):
         None
     """
 
-    log_file_name = f"Change_Detection_Processing_Log_{provider_name}_{cd.rundatetime}.txt"
+    log_file_name = f"Change_Detection_Processing_Log_{provider_name}_{utils.rundatetime}.txt"
     log_file = os.path.join(log_folder_path, log_file_name)
     log_text = f"""
 Change Detection Processing Log for {provider_name}, {date_string}
        
 COMPARISON BETWEEN ORIGINAL DATA AND PREVIOUS ORIGINAL DATA
-{cd.format_statistics(stats)}  
+{utils.format_statistics(stats)}  
     """
 
     # Create the processing log file and populate it with the log text
