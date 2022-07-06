@@ -55,6 +55,7 @@ attribute_hash_fieldname = "Attribute_Hash"
 geom_hash_fieldname = "Geometry_Hash"
 full_hash_fieldname = "Full_Hash"
 change_type_fieldname = "Change_Type"
+attributes_modified_fieldname = "Attributes_Modified"
 
 # Hash table field names as list, not including id_fieldname:
 change_detect_fields = [
@@ -164,7 +165,7 @@ def detect_changes(
         db_connection,
         new_table,
         source_data_path,
-        source_database_name,
+        None,
         source_data_type,
         provider_attribute_fields,
         provider_reference_fields,
@@ -411,6 +412,8 @@ def load_data_and_compute_hash(
     # for a file there will be only one layer
     if source_data_layer is not None:
         layer = data_source.GetLayer(source_data_layer)
+        if (layer is None):
+            raise Exception (f"The layer {source_data_layer} not found in file {source_data_path}")
     else:
         layer = data_source.GetLayer()
     
@@ -771,9 +774,10 @@ def identify_old_table(db_connection, provider_name):
     
     # Sort hash tables for specified provider in database from newest to oldest
     # Exclude change summary tables ("Mission_from20210922_to20211103")
+    
     sql_query = f"""
         SELECT name FROM sqlite_master WHERE type='table' 
-        AND name LIKE '{provider_name}%' 
+        AND name LIKE '{provider_name}\_____\___\___' ESCAPE '\\' 
         AND name NOT LIKE '{provider_name}_from%' 
         ORDER BY name DESC
     """
@@ -959,7 +963,32 @@ def create_and_populate_change_summary_table(
         cursor.execute(query)
     finally:
         cursor.close()
+    
+    #add a field for changed attributes
+    query = f"alter table {change_table} add column {attributes_modified_fieldname} varchar"
+    cursor = db_connection.cursor()
+    try:
+        cursor.execute(query)
+    finally:
+        cursor.close()
         
+    #find fields which have changed
+    query = f"UPDATE {change_table} set {attributes_modified_fieldname} = "
+    query += "substr("
+    for field in provider_attribute_fields:
+        query += f"case when {field}_{old_table_field_suffix} is not {field}_{new_table_field_suffix} then ',{field}' else '' end || "
+    
+    query = query[:-4]
+    query += ", 2)"
+    query += f" WHERE {type} = '{utils.ChangeType.UPDATED_ATTRIBUTES.value}'"
+    
+    logger.debug(f"Attribute change query: {query}")
+    cursor = db_connection.cursor()
+    try:
+        cursor.execute(query)
+    finally:
+        cursor.close()
+    
     db_connection.commit()
 
 
@@ -1010,7 +1039,8 @@ def export_change_table(change_table, db_connection, gpkg_file_name):
                 
     
         gis_output = ogr.GetDriverByName('GPKG').CreateDataSource(gpkg_file_name)
-            
+        if gis_output is None:
+            raise Exception("Unable to create output geopackage file. Ensure directory exists and doesn't.")
         #everything gets written as BC Albers
         srs = osr.SpatialReference()
         srs.ImportFromEPSG(utils.bc_albers_epsg)

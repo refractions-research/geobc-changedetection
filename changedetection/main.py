@@ -79,7 +79,8 @@ def runapp():
     #process_provider("District of Saanich Parks")
     #process_provider("District of Saanich")
     #process_provider("District of North Vancouver")
-    #process_provider("Kamloops")
+    #process_provider("Kelowna")
+    #process_provider("City of Victoria")
     #process_provider("RD_Fraser_Fort_George")
     #process_provider("Regional District of Central Okanagan")
     

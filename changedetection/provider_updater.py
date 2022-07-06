@@ -11,14 +11,13 @@ from osgeo import ogr
 import utils
 
 #* CHECKS FOR VALID URL AND RETURNS LIST OF FIELD NAMES FOR DATASET
-def confirm_url_get_schema(url, dataset_name, database_name, data_type, is_rest):
+def confirm_url_get_schema(url, dataset_name, database_name, data_type):
     """Tests that a URL returns a valid file. If file is available, returns a list of field names
         Parameters:
         - url to download the data
         - dataset_name
         - database_name (only required if dataset is within a database)
         - data type: a string that matches the OGC driver string required 
-        - is_rest: boolean to determine if file is streamed from a REST service
 
         Returns list of: [Boolean success], [list of field names], [message string] 
     """
@@ -30,48 +29,44 @@ def confirm_url_get_schema(url, dataset_name, database_name, data_type, is_rest)
 
     #Attempt to download package to temp folder
     #TODO NEED TO ADD error/success messages returned from get_file_from_url function
-    response, response_code, request_error = utils.get_file(url,is_rest,dataset_name,temp_folder)
-    
-    print(f"            [{response_code}]{response}")
-    if not request_error is None:
-        print(f"            Request Error: {request_error}")
+    try:
+        utils.get_file(url,dataset_name,temp_folder)
+    except Exception as ex:
+        print(f"            Request Error: {ex}")
+        message = f"Download Failed\nRequest Error:{ex}"
+        return[False,None,message]
     
     #Checks for a successful response code before continuing
-    if response_code in range(200, 300):
-        driver = ogr.GetDriverByName(data_type)
-        field_names = None
-        #Open connection to data source - path will be different if in a database
-        if database_name is None:
-            data_source = driver.Open(os.path.join(temp_folder,dataset_name))
-        else:
-            data_source = driver.Open(os.path.join(temp_folder,database_name)) 
-
-        if data_source is None:
-            success = False
-            message = 'Unable to connect to data after download'
-            # Adds request error to output message if any
-            if not request_error is None:
-                message = f"{message}\nRequest Error: {request_error}"
-        else:
-            message = 'Connected to data source'
-            success = True
-
-            #Enumerate field and add to list
-            if database_name is None:
-                layer = data_source.GetLayer()
-            else:
-                layer = data_source.GetLayer(dataset_name)
-
-            field_names = [field.name for field in layer.schema]
-            del layer
-            del data_source
-
-        shutil.rmtree(temp_folder)
+    
+    driver = ogr.GetDriverByName(data_type)
+    field_names = None
+    
+    #Open connection to data source - path will be different if in a database
+    if database_name is None:
+        dataset_file = os.path.join(temp_folder,dataset_name)
+        data_source = driver.Open(dataset_file)
     else:
-        success = False
-        field_names = None
-        message = f"Download Failed\nResponse:[{response_code}]{response}\nRequest Error:{request_error}"
+        dataset_file = os.path.join(temp_folder,database_name)
+        data_source = driver.Open(dataset_file) 
 
+    if data_source is None:
+        success = False
+        message = f"Unable to connect to data after download\nFile:{dataset_file}"
+    else:
+        message = 'Connected to data source'
+        success = True
+
+        #Enumerate field and add to list
+        if database_name is None:
+            layer = data_source.GetLayer()
+        else:
+            layer = data_source.GetLayer(dataset_name)
+
+        field_names = [field.name for field in layer.schema]
+        del layer
+        del data_source
+
+    shutil.rmtree(temp_folder)
     return[success,field_names,message]
 
 #* CHECKS FOR EXISTING PROVIDER WITH SAME NAME AS NEW
@@ -121,7 +116,6 @@ def build_dict(prv, prv_dict):
                 "url": None,
                 "data_type": None,
                 "database_name": None,
-                "is_rest": None,
                 "compare_fields": [],
                 "Schedule": None                    
                 }   
@@ -155,7 +149,7 @@ def select_gdal(prv_dict):
             msg = f"The GDAL type of your data is set to {prv_type} which is not a valid GDAL file type\n Select a new type."
     return easygui.choicebox(msg, "Select GDAL File Type", gdal_types, gdal_index)
 
-#* SETS/CHECKS BOOLEAN PARAMETER VALUES (REST SERVICE & SCHEDULER)
+#* SETS/CHECKS BOOLEAN PARAMETER VALUES (SCHEDULER)
 def set_bool(in_val, val_type):
     """
     Params: in_val - Current value of parameter from dict (True, False, None)
@@ -397,11 +391,7 @@ def main():
     while data_type is None:
         easygui.msgbox("You must select a valid gdal data type", "No data type selected")
         data_type = select_gdal(data_dict)
-    
-    #> Checks/sets REST service status
-    is_rest = set_bool(data_dict.get("is_rest"), "REST")
-    print(f"        Set rest service status for {provider} to {is_rest}")
-
+   
     #> Checks/sets schedule status
     is_sched = set_bool(data_dict.get("Schedule"), "Scheduled")
     print(f"        Set scheduler status for {provider} to {is_sched}")
@@ -416,14 +406,14 @@ def main():
 
     # Tests url validity by downloading and checking data and returns list of fields in dataset
     print("        Testing URL")
-    url_valid, fields, msg = confirm_url_get_schema(url, dataset_name, database_name, data_type, is_rest)
+    url_valid, fields, msg = confirm_url_get_schema(url, dataset_name, database_name, data_type)
     while url_valid is False:
         print(f"            URL invalid for {provider}:\n{msg}\n")
         url = easygui.enterbox(f'{msg}\n\nEdit URL and try again?', "INVALID URL", url)
         if url is None:
             url_valid = None
         else:
-            url_valid, fields, msg = confirm_url_get_schema(url, dataset_name, database_name, data_type, is_rest)
+            url_valid, fields, msg = confirm_url_get_schema(url, dataset_name, database_name, data_type)
 
     # Cancels configuration and restarts dialogue for new provider if user cancels URL re-entry
     if url_valid is None:
@@ -451,7 +441,6 @@ def main():
                 "data_type": data_type,
                 "url": url,
                 "database_name": database_name,
-                "is_rest": is_rest,
                 "compare_fields": compare_fields,
                 "Schedule": is_sched}
             })
@@ -468,6 +457,6 @@ if __name__ == '__main__':
     run_updater = True
     while run_updater:
         run_updater = main()
-    msg = "\nUpdates complete, goodbye!\n\nฅ(＾・ω・＾ฅ)\n\n"
+    msg = "\nUpdates complete, goodbye!"
     print(msg)
     easygui.msgbox(msg, "Exiting Updater")

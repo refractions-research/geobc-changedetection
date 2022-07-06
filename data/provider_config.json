@@ -4,7 +4,6 @@
         "data_type": "OpenFileGDB",
         "url": "https://map.saanich.ca/gisdata/Parks/ParksGDB.zip",
         "database_name": "Parks.gdb",
-        "is_rest": false,
         "compare_fields": [
             "PARKNAME",
             "PARKTYPE"
