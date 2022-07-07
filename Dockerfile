@@ -2,16 +2,19 @@
 #--------------- BUILD PROJ ------------------------
 FROM osgeo/gdal:ubuntu-full-latest
 
-COPY ./changedetection /changedectection/changedectection
-COPY LICENSE /changedectection/LICENSE
-COPY requirements.txt /changedectection/requirements.txt
+COPY ./changedetection /changedetection/changedetection
+COPY LICENSE /changedetection/LICENSE
+COPY requirements.txt /changedetection/requirements.txt
 
 RUN apt-get update -y 
 RUN apt-get install -y --fix-missing --no-install-recommends apt python3-pip
 
-WORKDIR /changedectection
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get install -y python3.10-tk
+
+WORKDIR /changedetection
 RUN pip3 install -r requirements.txt
 
 ENV PROJ_LIB=/usr/share/proj
 
-WORKDIR ./changedectection 
+WORKDIR ./changedetection 

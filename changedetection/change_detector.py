@@ -1028,19 +1028,24 @@ def export_change_table(change_table, db_connection, gpkg_file_name):
         cursor.close()
         
     if rowcount > 0:
-    
         #Create new empty geopackage with today's date
-        #TODO: Get geometry type from data - currently hard coded to MULTILINESTRING
+        #and export data
+
         logger.debug(f"export file: {gpkg_file_name}")
         
         if os.path.exists(gpkg_file_name):
             logger.debug(f"file {gpkg_file_name} exists and will be replace with new version")
             os.remove(gpkg_file_name)
-                
-    
+        
+        #make folder 
+        outdir = os.path.dirname(gpkg_file_name)
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
+                 
+                 
         gis_output = ogr.GetDriverByName('GPKG').CreateDataSource(gpkg_file_name)
         if gis_output is None:
-            raise Exception("Unable to create output geopackage file. Ensure directory exists and doesn't.")
+            raise Exception(f"Unable to create output geopackage file {gpkg_file_name}. Ensure parent directory exists.")
         #everything gets written as BC Albers
         srs = osr.SpatialReference()
         srs.ImportFromEPSG(utils.bc_albers_epsg)

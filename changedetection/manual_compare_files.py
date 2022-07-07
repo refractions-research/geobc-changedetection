@@ -10,7 +10,6 @@ import sqlite3
 import change_detector
 from multiprocessing import Process, Queue
 import logging
-from tkinter import Widget
 
 ERROR = 1
 OK = 2
@@ -469,15 +468,58 @@ def do_work(q, file1, layer1, file2, layer2, fields, output_file):
         assert not os.path.exists(dbtemp.name)
             
             
-
-def main():
+#main function to run that runs the gui
+def gui_main():
     window = tk.Tk()
     window.title("Manual Change Detection")
     Wizard(window)
     window.geometry("500x400")
     window.mainloop()
 
+#main function to run if command arguments provided
+def command_main():
+    file1 = utils.args.args[0]
+    file2 = utils.args.args[1]
+    output_file = utils.args.args[2]
+    fields = utils.args.args[3].split(",")
+        
+    if (file1 == None or file1.strip() == ""):
+        print("Invalid file1")
+        return
+    if (not os.path.exists(file1)):
+        print("File1 not found")
+        return
+    if (file2 == None or file2.strip() == ""):
+        print("Invalid file2")
+        return
+    if (not os.path.exists(file2)):
+        print("File2 not found")
+        return    
+    if (output_file == None or output_file.strip() == ""):
+        print("Invalid output file")
+        return
+    if (fields == None or len(fields) == 0 ):
+        print("Invalid fields - at least one field must be specified")
+        return
+
+    logger.info("Comparing files")
+    logger.info(f"Input 1: {file1}")
+    logger.info(f"Input 2: {file2}")
+    logger.info(f"Output: {output_file}")
+    logger.info(f"Fields: {fields}")
+    
+    do_work(q, file1, None, file2, None, fields, output_file)
+    
+    if (q.get(0) == OK):
+        print("Complete:")
+    else:
+        print("Error:")
+    print(q.get(1))
+        
 if __name__ == '__main__':
-    main()
-
-
+    #args are parsed in utils
+    if (len(utils.args.args) == 0):
+        gui_main()
+    else:
+        command_main()
+        
