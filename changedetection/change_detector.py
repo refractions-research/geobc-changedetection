@@ -1085,6 +1085,19 @@ def export_change_table(change_table, db_connection, gpkg_file_name):
                 for key in sorted(schema):
                     if key.lower() == geom_wkt_fieldname.lower():
                         geom = ogr.CreateGeometryFromWkt(row[incrementor])
+                        #convert single to multi
+                        #still testing this
+                        #if (geom.GetGeometryType() == ogr.wkbLineString or
+                        #    geom.GetGeometryType() == ogr.wkbLineString25D or
+                        #    geom.GetGeometryType() == ogr.wkbLineStringM or
+                        #    geom.GetGeometryType() == ogr.wkbLineStringZM):
+                        #    geom = ogr.ForceToMultiLineString(geom) 
+                        #if (geom.GetGeometryType == ogr.wkbPolygon25D or
+                        #    geom.GetGeometryType == ogr.wkbPolygonM or
+                        #    geom.GetGeometryType == ogr.wkbPolygonZM or
+                        #    geom.GetGeometryType == ogr.wkbPolygon):
+                        #    geom = ogr.ForceToMultiPolygon(geom)     
+                            
                     else:
                         if row[incrementor]:
                             fields[key] = row[incrementor]

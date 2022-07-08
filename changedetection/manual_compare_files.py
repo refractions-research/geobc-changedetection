@@ -402,7 +402,7 @@ class Step2(tk.Frame):
 
     def get_selected(self):
         selected=[]
-        for i in range(0, len(self.checkboxvalue_list)-1):
+        for i in range(0, len(self.checkboxvalue_list)):
             if (self.checkboxvalue_list[i].get()):
                 selected.append(self.sharedfields[i])
         
@@ -445,7 +445,7 @@ def do_work(q, file1, layer1, file2, layer2, fields, output_file):
             providerstats[utils.DataStatistic.NEW_DUPLICATE_RECORDS] = duplicate_features_2[1]
             
             changetable = "changes"
-            change_detector.create_and_populate_change_summary_table(db_connection, ds1_table, "ds1", ds2_table, "ds2", changetable, fields, [])
+            change_detector.create_and_populate_change_summary_table(db_connection, ds2_table, "ds2", ds1_table, "ds1", changetable, fields, [])
             change_detector.export_change_table(changetable, db_connection, output_file)
             
             change_detector.compute_stats(db_connection, ds2_table, ds1_table, changetable, providerstats)
