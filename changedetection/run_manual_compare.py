@@ -1,3 +1,12 @@
+# -------------------------------------------------------------------------------
+# 
+# This script provides a UI where users can select two files & fields to compare,
+# then runs the comparison and writes the results to an output file
+#
+# Author:      Emily Gouge (Refractions Research)
+# Created:     July 13, 2022
+# Copyright:   (c) GeoBC
+# -------------------------------------------------------------------------------
 import tkinter as tk
 import tkinter.filedialog as tkfd
 import tkinter.ttk as ttk
@@ -5,39 +14,50 @@ import tkinter.messagebox as messagebox
 
 import tempfile
 import os
-import utils
 import sqlite3
-import change_detector
 from multiprocessing import Process, Queue
 import logging
+
+from core import utils
+from core import change_detector
 
 ERROR = 1
 OK = 2
 
-# ---- configure logging ----
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+_logger = logging.getLogger()
 
-# console handler - info messages only
-consolehandler = logging.StreamHandler()
-consolehandler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-consolehandler.setFormatter(formatter)
-logger.addHandler(consolehandler)
+#-------------------------------------------------------------------------------
+# setup logging
+#-------------------------------------------------------------------------------
+def configure_logging():
+    _logger.setLevel(logging.DEBUG)
+    # console handler - info messages only
+    consolehandler = logging.StreamHandler()
+    consolehandler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    consolehandler.setFormatter(formatter)
+    _logger.addHandler(consolehandler)
 
-# file handler - all messages
-fileloghandler = logging.FileHandler(os.path.join(utils.log_folder, "Change_Detection_Manual_Compare_" + utils.rundatetime + ".txt"), mode='a', encoding="utf-8",)
-fileloghandler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-fileloghandler.setFormatter(formatter)
-logger.addHandler(fileloghandler)
+    # file handler - all messages
+    fileloghandler = logging.FileHandler(os.path.join(utils.log_folder, "Change_Detection_Manual_Compare_" + utils.rundatetime + ".txt"), mode='a', encoding="utf-8",)
+    fileloghandler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fileloghandler.setFormatter(formatter)
+    _logger.addHandler(fileloghandler)
 
 
 # Queue must be global
-q = Queue()
+# for mulit-processing feedback 
+_thread_queue = Queue()
 
+#-------------------------------------------------------------------------------
+# Wizard with two pages, the first
+# for selecting input and output files, the second
+# for selecting fields to process
+#-------------------------------------------------------------------------------
 class Wizard(tk.Frame):
     
+    #initialize wizard 
     def __init__(self, parent):
         super().__init__(parent, bd=1, relief="raised")
         
@@ -72,24 +92,27 @@ class Wizard(tk.Frame):
         
         self.pack(side="top", fill="both", expand=True)
 
-    
+    #cancel wizard
     def cancel(self):
         self.master.destroy()
 
+    #move back
     def back(self):
         tmpstep = self.current_step 
         tmpstep = tmpstep - 1
         if (tmpstep < 0):
             tmpstep = 0
         self.show_step(tmpstep)
-        
+    
+    #move next
     def next(self):
         tmpstep = self.current_step 
         tmpstep = tmpstep + 1
         if (tmpstep >= len(self.steps)):
             tmpstep = len(self.steps) - 1
         self.show_step(tmpstep)
-            
+    
+    #finish
     def finish(self):
         if (len(self.step2.get_selected()) == 0):
             messagebox.showinfo("Fields", "You must selected at least one field")
@@ -102,39 +125,37 @@ class Wizard(tk.Frame):
         fields = self.step2.get_selected()
         output_file = self.step1.output_txt.get().strip()
         
-        
-        #here we have the two files and fields to compare
-        
+        #disable all buttons
         self.back_button["state"] = tk.DISABLED
         self.finish_button["state"] = tk.DISABLED
         self.next_button["state"] = tk.DISABLED
         self.cancel_button["state"] = tk.DISABLED
             
-        self.p1 = Process(target=do_work, args=(q, file1, layer1, file2, layer2, fields, output_file))
+        #start processing in another thread
+        self.p1 = Process(target=do_work, args=(_thread_queue, file1, layer1, file2, layer2, fields, output_file))
         self.p1.start()
         self.after(1000, self.poll_process)
-
     
-    
+    #poll sub process until complete
     def poll_process(self):
         if (self.p1.is_alive()):
             self.after(1000, self.poll_process)
             return
         else:    
-            if (q.get(0) == OK):
-                messagebox.showinfo("Complete.", f"Comparison complete.\n\n{q.get(1)}")
+            if (_thread_queue.get(0) == OK):
+                messagebox.showinfo("Complete.", f"Comparison complete.\n\n{_thread_queue.get(1)}")
                 self.show_step(0)
             else: 
-                messagebox.showerror("Error Comparing Dataset", f"An error occurred while comparing datasets. {q.get(1)}.  See log files for more details.")
+                messagebox.showerror("Error Comparing Dataset", f"An error occurred while comparing datasets. {_thread_queue.get(1)}.  See log files for more details.")
                 self.back_button["state"] = tk.NORMAL
                 self.finish_button["state"] = tk.NORMAL
             
             self.cancel_button["state"] = tk.NORMAL
 
-                
+
+    #show specific wizard page
+    #step = 1 shows first page, step = 2 shows the second page                
     def show_step(self, step):
-
-
         if step == 1:
             if self.step1.output_txt.get().strip() == "":
                 messagebox.showinfo("Error", "Output file must be selected")
@@ -149,8 +170,6 @@ class Wizard(tk.Frame):
             
             self.step2.initfields(sharedfields)
             
-                 
-            
         if self.current_step is not None:
             # remove current step
             current_step = self.steps[self.current_step]
@@ -159,7 +178,6 @@ class Wizard(tk.Frame):
         self.current_step = step
 
         new_step = self.steps[step]
-        #new_step.pack(side="top", fill="both", expand=False)
         new_step.pack(side="top", fill="both", expand=True)
         
         if step == 0:
@@ -181,7 +199,7 @@ class Wizard(tk.Frame):
             self.next_button["state"] = tk.NORMAL
 
         
-    
+    #get shared fiels between two input files
     def get_fields(self):
         
         #read input files and get fields
@@ -220,7 +238,13 @@ class Wizard(tk.Frame):
         intersection = fields1.intersection(fields2)
         
         return intersection
-        
+
+#-------------------------------------------------------------------------------
+#Page 1 in the wizard
+#This page collects two input files and one output files. 
+#also contains ability to select layer; if input file contains
+#more than one layer         
+#-------------------------------------------------------------------------------
 class Step1(tk.Frame):
     
     def __init__(self, parent):
@@ -236,7 +260,6 @@ class Step1(tk.Frame):
         input1_btn = tk.Button(input_frame, text = "file...", command=lambda: self.select_file('Select input file', self.input1_txt, self.layer1_cmb, self.layer1_lbl))
         input1dir_btn = tk.Button(input_frame, text = "dir...", command=lambda: self.select_dir('Select input directory', self.input1_txt, self.layer1_cmb, self.layer1_lbl))
         self.input1_txt.bind("<FocusOut>", lambda event:self.update_layers(self.input1_txt, self.layer1_cmb, self.layer1_lbl))
-                             
         
         self.layer1_lbl = tk.Label(input_frame, text="Layer:")
         self.layer1_cmb = ttk.Combobox(input_frame)
@@ -283,9 +306,9 @@ class Step1(tk.Frame):
         header.pack(side="top", fill="x", pady=10)
         sep.pack(fill='x')  
         input_frame.pack(side="top", fill="both")
-        #input_frame.columnconfigure(1, weight=1)
         input_frame.columnconfigure(2, weight=1)
-        
+
+    #updates the layer combo with the file referenced in the text box         
     def update_layers(self, text, layercombo, layerlbl):
         filename = text.get().strip()
         
@@ -306,7 +329,8 @@ class Step1(tk.Frame):
             else:
                 layercombo["state"] = tk.NORMAL
                 layerlbl["state"] = tk.NORMAL
-        
+    
+    #selects a file and updates the text box
     def select_file(self, title, toupdate, layercombo, layerlbl, filetypes = (('All Files (*.*)', '*'),)):
         filename = tkfd.askopenfilename(title = title, filetypes = filetypes)
         
@@ -317,7 +341,8 @@ class Step1(tk.Frame):
         toupdate.xview(tk.END)
         
         self.update_layers(toupdate,layercombo, layerlbl)
-        
+    
+    #selects a directory and updates the text box
     def select_dir(self, title, toupdate, layercombo, layerlbl):
         filename = tkfd.askdirectory(title = title)
         
@@ -328,7 +353,8 @@ class Step1(tk.Frame):
         toupdate.xview(tk.END)
         
         self.update_layers(toupdate,layercombo, layerlbl)
-        
+    
+    #selects the output file
     def select_save_file(self, title, toupdate, filetypes = (('All Files (*.*)', '*.*'),)):
         filename = tkfd.asksaveasfilename(title = title, filetypes = filetypes, defaultextension=".gpkg")
         if (filename == ""):
@@ -337,7 +363,10 @@ class Step1(tk.Frame):
         toupdate.insert(0, filename)
         toupdate.xview(tk.END)
         
-        
+#-------------------------------------------------------------------------------        
+#Page 2 in the wizard
+#This page collects fields to use in comparison 
+#-------------------------------------------------------------------------------
 class Step2(tk.Frame):
     
     def __init__(self, parent):
@@ -409,6 +438,9 @@ class Step2(tk.Frame):
         return selected
 
 
+#-------------------------------------------------------------------------------
+#finds all spatial layers in the given file
+#-------------------------------------------------------------------------------
 def get_layers(filename):
     layers = utils.get_layers(filename)
     if (layers is None):
@@ -416,11 +448,16 @@ def get_layers(filename):
         return None;
     return layers
                 
+#-------------------------------------------------------------------------------                
+#does the manual file comparison   
+#-------------------------------------------------------------------------------
+def do_work(_thread_queue, file1, layer1, file2, layer2, fields, output_file):
     
+    #initialize these values for this thread
+    utils.parse_config()
+    change_detector.configure_logging()
     
-    
-def do_work(q, file1, layer1, file2, layer2, fields, output_file):
-    
+    #create a temporary file for the database
     dbtemp = tempfile.NamedTemporaryFile(delete=False)
     try:
         db_connection = sqlite3.connect(dbtemp.name)
@@ -445,7 +482,8 @@ def do_work(q, file1, layer1, file2, layer2, fields, output_file):
             providerstats[utils.DataStatistic.NEW_DUPLICATE_RECORDS] = duplicate_features_2[1]
             
             changetable = "changes"
-            change_detector.create_and_populate_change_summary_table(db_connection, ds2_table, "ds2", ds1_table, "ds1", changetable, fields, [])
+            _logger.debug("running cd")
+            change_detector.create_and_populate_change_table(db_connection, ds2_table, "ds2", ds1_table, "ds1", changetable, fields, [])
             change_detector.export_change_table(changetable, db_connection, output_file)
             
             change_detector.compute_stats(db_connection, ds2_table, ds1_table, changetable, providerstats)
@@ -455,11 +493,11 @@ def do_work(q, file1, layer1, file2, layer2, fields, output_file):
             """  
             
             #capture some stats and display it to the user
-            q.put(OK)
-            q.put(msg)
+            _thread_queue.put(OK)
+            _thread_queue.put(msg)
         except Exception as ex:
-            q.put(ERROR)
-            q.put(ex)
+            _thread_queue.put(ERROR)
+            _thread_queue.put(ex)
         finally:
             db_connection.close()
     finally:
@@ -467,8 +505,9 @@ def do_work(q, file1, layer1, file2, layer2, fields, output_file):
         os.unlink(dbtemp.name)
         assert not os.path.exists(dbtemp.name)
             
-            
-#main function to run that runs the gui
+#-------------------------------------------------------------------------------            
+#function to run that runs the gui
+#-------------------------------------------------------------------------------
 def gui_main():
     window = tk.Tk()
     window.title("Manual Change Detection")
@@ -476,7 +515,9 @@ def gui_main():
     window.geometry("500x400")
     window.mainloop()
 
-#main function to run if command arguments provided
+#-------------------------------------------------------------------------------
+#function to run if command arguments provided
+#-------------------------------------------------------------------------------
 def command_main():
     file1 = utils.args.args[0]
     file2 = utils.args.args[1]
@@ -502,22 +543,27 @@ def command_main():
         print("Invalid fields - at least one field must be specified")
         return
 
-    logger.info("Comparing files")
-    logger.info(f"Input 1: {file1}")
-    logger.info(f"Input 2: {file2}")
-    logger.info(f"Output: {output_file}")
-    logger.info(f"Fields: {fields}")
+    _logger.info("Comparing files")
+    _logger.info(f"Input 1: {file1}")
+    _logger.info(f"Input 2: {file2}")
+    _logger.info(f"Output: {output_file}")
+    _logger.info(f"Fields: {fields}")
     
-    do_work(q, file1, None, file2, None, fields, output_file)
+    do_work(_thread_queue, file1, None, file2, None, fields, output_file)
     
-    if (q.get(0) == OK):
+    if (_thread_queue.get(0) == OK):
         print("Complete:")
     else:
         print("Error:")
-    print(q.get(1))
-        
+    print(_thread_queue.get(1))
+
+#-------------------------------------------------------------------------------
+# Main function
+#-------------------------------------------------------------------------------        
 if __name__ == '__main__':
-    #args are parsed in utils
+    utils.parse_config()
+    configure_logging()
+    
     if (len(utils.args.args) == 0):
         gui_main()
     else:

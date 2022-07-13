@@ -1,14 +1,18 @@
 # Edits existing or adds new fields to provider config JSON
 # Maddison Lussin
 # August 23 - 2021
+#-------------------------------------------------
+# Refactoring Updates
+# Emily Gouge (Refractions Research
+# July 2022
+#-------------------------------------------------
 
 import easygui
 import shutil
 import os
 import datetime
 from osgeo import ogr
-
-import utils
+from core import utils
 
 #* CHECKS FOR VALID URL AND RETURNS LIST OF FIELD NAMES FOR DATASET
 def confirm_url_get_schema(url, dataset_name, database_name, data_type):
@@ -333,7 +337,7 @@ def main():
     print("\n\n\n")
 
     #>Loads existing Provider Dictionary
-    #TODO: switch to environment passed to main then select correct config
+    #TODO: switch to environment passed to py then select correct config
     
     config_json = utils.provider_config
     pd = utils.load_json(config_json) 
@@ -454,6 +458,7 @@ def main():
 
 #* RUN MAIN
 if __name__ == '__main__':
+    utils.parse_config()
     run_updater = True
     while run_updater:
         run_updater = main()

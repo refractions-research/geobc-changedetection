@@ -1,63 +1,35 @@
 #-------------------------------------------------------------------------------
-# Name:        main
-# Purpose:     run process to obtain provider data from schedule or manual trigger 
-#              trigger to download data to working folder from providers
-#              stage data to working folder
-#              call change detection
-#              and log results / trigger notifications as needed
+# Name:        run_all
+# Purpose:     run process to the reads provider data from json file,  
+#              download datas for each provider then calls change
+#              detection tools to computer changes and write results to output files
 # Author:      jedharri
 #
 # Created:     08-21-2021
 # Copyright:   (c) GeoBC 2021
 # Licence:     <your licence>
 #-------------------------------------------------------------------------------
+# Updates: refactoring, logging, and layer statistics 
+# Emily Gouge
+# July 2022
+#-------------------------------------------------------------------------------
 
-import utils
+from core import utils
 import os
 import datetime
 import logging
-import change_detector
-
-#TODO functions. 
-'''
-- add configuration for a provider with web service data source DONE
-- add configuration for a provider with ad-hoc data source
-- add new ad-hoc data for a provider and compare to previous
-- download web service data for a single provider and compare to previous
-- update configuration for a provider (for roads)
-- run scheduled download data for a set of providers and compare to previous
-- when running scheduled compare, notify the (who? - geobc info)
-- when running ad-hoc compare - notify the user
-- compare two versions of data without waiting (we need another table method option - currently tied to date . . . add time = or v2, v3 etc?)
-- add a new provider 
-- add a new top level data type in addition to roads (FUTURE)
-- set up schedule to run change detection (Jenkins?)
-- each top level data type should have separate changes database (needs config)
-- remove top level data type as nested config item, and point to separate config file for each type
-- 
-
-'''
+from core import change_detector
 
 # ---- configure logging ----
-logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+_logger = logging.getLogger()
 
-# console handler - info messages only
-consolehandler = logging.StreamHandler()
-consolehandler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-consolehandler.setFormatter(formatter)
-logger.addHandler(consolehandler)
+#keep track of providers processed
+_processed_providers = []
 
-# file handler - all messages
-fileloghandler = logging.FileHandler(os.path.join(utils.log_folder, "Change_Detection_Processing_" + utils.rundatetime + ".txt"), mode='a', encoding="utf-8",)
-fileloghandler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-fileloghandler.setFormatter(formatter)
-logger.addHandler(fileloghandler)
-
-#class for tracking provider runs 
-#and associated status and statistics
+#-------------------------------------------------------------------------------
+# Class for tracking a data provider with   
+# associated status and statistics
+#-------------------------------------------------------------------------------
 class ProviderStatus:
     
     def __init__(self, provider_name):
@@ -69,10 +41,30 @@ class ProviderStatus:
         self.message = message
         self.stats = stats
         
-    
-#list of providers processed
-pproviders = []
 
+#-------------------------------------------------------------------------------
+# configure logging   
+#-------------------------------------------------------------------------------
+def configure_logging():
+    _logger.setLevel(logging.DEBUG)
+    # console handler - info messages only
+    consolehandler = logging.StreamHandler()
+    consolehandler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    consolehandler.setFormatter(formatter)
+    _logger.addHandler(consolehandler)
+
+    # file handler - all messages
+    fileloghandler = logging.FileHandler(os.path.join(utils.log_folder, "Change_Detection_Processing_" + utils.rundatetime + ".txt"), mode='a', encoding="utf-8",)
+    fileloghandler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    fileloghandler.setFormatter(formatter)
+    _logger.addHandler(fileloghandler)
+
+
+#-------------------------------------------------------------------------------
+# Run the application   
+#-------------------------------------------------------------------------------
 def runapp():
     process_all_providers()
     
@@ -87,6 +79,9 @@ def runapp():
     #prints processing summary
     print_summary();
 
+#-------------------------------------------------------------------------------
+# Processes all providers   
+#-------------------------------------------------------------------------------
 def process_all_providers():
     provider_dict = utils.load_json(utils.provider_config)
     providers = provider_dict.keys()
@@ -95,22 +90,25 @@ def process_all_providers():
         process_provider(provider)
 
 
+#-------------------------------------------------------------------------------
+# Processes individual provider   
+#-------------------------------------------------------------------------------
 def process_provider(provider_name):
     
-    logger.info(f"""Processing: {provider_name}""")
+    _logger.info(f"""Processing: {provider_name}""")
     info = ProviderStatus(provider_name)
-    pproviders.append(info)
+    _processed_providers.append(info)
     
     try:
         provider_dict = utils.load_json(utils.provider_config)
         if not provider_name in provider_dict.keys():
-            logger.error(f"""No configuration for {provider_name} found.""")
+            _logger.error(f"""No configuration for {provider_name} found.""")
             info.setStatus(utils.ProcessingStatus.NOT_PROCESSED, f"No details found for {provider_name} in configuration file.")
             return
         
         url = provider_dict[provider_name].get('url')
         if (not url):
-            logger.warning(f"""No URL for {provider_name} in configuration file. Provider not processed.""")
+            _logger.warning(f"""No URL for {provider_name} in configuration file. Provider not processed.""")
             info.setStatus(utils.ProcessingStatus.NOT_PROCESSED, f"No URL for {provider_name} in configuration file.")
             return
             
@@ -134,7 +132,7 @@ def process_provider(provider_name):
         except Exception as e:
             #some error occurred and we don't want to continue
             info.setStatus(utils.ProcessingStatus.ERROR, f"Data download failed: {e}")
-            logger.error(f"""Could not download data for {provider_name}""")
+            _logger.error(f"""Could not download data for {provider_name}""")
             return
         
         stats = change_detector.detect_changes(
@@ -154,28 +152,28 @@ def process_provider(provider_name):
             
     except Exception as e:
         info.setStatus(utils.ProcessingStatus.ERROR, f"Error while processing {provider_name}: " + str(e))
-        logger.error(f"Error processing {provider_name}", exc_info=e)
+        _logger.error(f"Error processing {provider_name}", exc_info=e)
     
         
-
+#-------------------------------------------------------------------------------
+# Print a summary of data processed to console   
+#-------------------------------------------------------------------------------
 def print_summary():
     logstr = "------------------------------------------------------------------------\n"
     logstr += "PROCESSING SUMMARY\n"
     logstr += "------------------------------------------------------------------------\n"
-    logstr += "Providers Processed: " + str(len(pproviders)) + "\n\n"
+    logstr += "Providers Processed: " + str(len(_processed_providers)) + "\n\n"
 
-    for provider in pproviders:
+    for provider in _processed_providers:
         logstr += f"{provider.provider_name}: {provider.status}   {provider.message}\n"
     logstr += "------------------------------------------------------------------------\n"
     logstr += "\n\n"
     
-    for provider in pproviders:
+    for provider in _processed_providers:
         logstr += "------------------------------------------------------------------------\n"
         logstr += f"{provider.provider_name} Statistics \n"
         logstr += utils.format_statistics(provider.stats)
         logstr += "\n\n"
-        
-    
     
     #print to console
     print(logstr)
@@ -191,18 +189,18 @@ def print_summary():
         processing_log.close()
     
         
-
-#to call change detection: (file name, data folder, fields, provider name, file type???)
-
+#-------------------------------------------------------------------------------
+# Main function
+#-------------------------------------------------------------------------------
 if __name__ == '__main__':
-    logger.debug(f"PROJ_LIB directory: {os.environ['PROJ_LIB']}")
-    logger.debug(f"Provider Configuration: {utils.provider_config}")
-    logger.debug(f"Change Log Database: {utils.provider_db}")
-    logger.debug(f"Log Output: {utils.log_folder}")
-    logger.debug(f"Geopackage Output Folder: {utils.output_folder}")
-    logger.debug(f"Data Staging Folder: {utils.data_staging_folder}")
+    utils.parse_config()
+    configure_logging()
+    
+    _logger.debug(f"PROJ_LIB directory: {os.environ['PROJ_LIB']}")
+    _logger.debug(f"Provider Configuration: {utils.provider_config}")
+    _logger.debug(f"Change Log Database: {utils.provider_db}")
+    _logger.debug(f"Log Output: {utils.log_folder}")
+    _logger.debug(f"Geopackage Output Folder: {utils.output_folder}")
+    _logger.debug(f"Data Staging Folder: {utils.data_staging_folder}")
 
     runapp()
-
-
-

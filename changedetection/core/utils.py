@@ -1,14 +1,26 @@
-# module of common functions and variables for 
-# Change Detection Script
-
-import json, datetime, configparser, argparse
-from enum import Enum
+#-------------------------------------------------------------------------------
+# Module of common function and variables for change detection script.
+#
+# Author: Emily Gouge
+# Date: July 2022
+# Copyright: (c) GeoBC 2021
+#-------------------------------------------------------------------------------
+import json, configparser, argparse
 from osgeo import ogr
 import os
 import logging
 from zipfile import ZipFile
 import requests
 import shutil
+from enum import Enum
+import datetime
+
+provider_config = None
+provider_db = None
+log_folder = None
+output_folder = None
+data_staging_folder = None
+args = None
 
 # Processing status values for provider
 class ProcessingStatus(Enum):
@@ -43,29 +55,41 @@ bc_albers_epsg = 3005
 
 #run date and time for logging filename
 rundatetime = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
+# Strings with today's date. Note: today_date_string variable used to create new table name.
+today_date_string = datetime.date.today().strftime("%Y_%m_%d")
 
-#initialize configuration variables for config.ini file
-configfile = "config.ini"
+#_logger
+_logger = logging.getLogger(__name__)
 
-parser = argparse.ArgumentParser(description='Run automated dataset change detection.')
-parser.add_argument('-c', type=str, help='the configuration file', required=False);
-parser.add_argument('args', type=str, nargs='*');
-args = parser.parse_args()
-if (args.c):
-    configfile = args.c
+#-------------------------------------------------------------------------------
+# parse the command line and configuration file 
+# populating various module variables
+#-------------------------------------------------------------------------------
+def parse_config():
+    global args, provider_config, provider_db, log_folder, output_folder, data_staging_folder
+    #update global variables
+    parser = argparse.ArgumentParser(description='Run automated dataset change detection.')
+    parser.add_argument('-c', type=str, help='the configuration file', required=False);
+    parser.add_argument('args', type=str, nargs='*');
+    args = parser.parse_args()
     
-config = configparser.ConfigParser()
-config.read(configfile)
-    
-provider_config = config['CHANGE_DETECTION']['provider_config']
-provider_db = config['CHANGE_DETECTION']['database_file']
-log_folder = config['CHANGE_DETECTION']['log_folder']
-output_folder = config['CHANGE_DETECTION']['geopackage_output_folder']
-data_staging_folder = config['CHANGE_DETECTION']['data_staging_folder']
+    #initialize configuration variables for config.ini file
+    configfile = "config.ini"
+    if (args.c):
+        configfile = args.c
+        
+    configp = configparser.ConfigParser()
+    configp.read(configfile)
+        
+    provider_config = configp['CHANGE_DETECTION']['provider_config']
+    provider_db = configp['CHANGE_DETECTION']['database_file']
+    log_folder = configp['CHANGE_DETECTION']['log_folder']
+    output_folder = configp['CHANGE_DETECTION']['geopackage_output_folder']
+    data_staging_folder = configp['CHANGE_DETECTION']['data_staging_folder']
 
-logger = logging.getLogger(__name__)
-
+#-------------------------------------------------------------------------------
 # converts data between JSON and python objects
+#-------------------------------------------------------------------------------
 def load_json(jf):
     """
     Args:
@@ -88,7 +112,8 @@ def dump_json(py, jf):
         json.dump(py, json_obj, indent= 4)
 
 #---------------------------------------------------------------------------------------------------
-# Converts statistics to string for logging    
+# Converts statistics to string for logging
+#---------------------------------------------------------------------------------------------------    
 def format_statistics(stats):
     if (stats is None):
         return ""
@@ -116,7 +141,10 @@ Number of Removed Features: {stats.get(DataStatistic.NUM_REMOVED_FEATURES, "")}
 Number of Attribute Changes: {stats.get(DataStatistic.NUM_FEATURES_ATTRIBUTE_CHANGES, "")}
 """
 
-
+#---------------------------------------------------------------------------------------------------
+# Find the spatial data source in the provided file
+# Returns None if can not read data source
+#---------------------------------------------------------------------------------------------------
 def find_data_source(filename):
     try:
         #find driver
@@ -130,12 +158,17 @@ def find_data_source(filename):
                     datasource = data_source
                     break;
             except Exception as e:
-                print(e)
-        
+                #eat this as another driver might work
+                pass
         return datasource;
     except Exception as e:
+        _logger.error(e)
         return None
 
+#---------------------------------------------------------------------------------------------------
+# Finds all spatial layers in the given file.
+# Returns None if could not read data source
+#---------------------------------------------------------------------------------------------------
 def get_layers(filename):
     datasource = find_data_source(os.path.abspath(filename))
     if (datasource is None):
@@ -148,7 +181,9 @@ def get_layers(filename):
         return layers;
     
     
-#script parameters
+#---------------------------------------------------------------------------------------------------
+# Downloads data set from url
+#---------------------------------------------------------------------------------------------------
 def get_file(url, dataset_name, staging_folder):
     """Downloads dataset from url and extracts dataset if required (zip dataset)
     
@@ -164,8 +199,8 @@ def get_file(url, dataset_name, staging_folder):
                 - if error occrus while downloading or extracting data
     """
     
-    logger.info(f"Downloading dataset: {dataset_name}")
-    logger.debug(f"URL: {url}")
+    _logger.info(f"Downloading dataset: {dataset_name}")
+    _logger.debug(f"URL: {url}")
     
     # delete existing staging folder
     shutil.rmtree(staging_folder, ignore_errors=True)
@@ -193,7 +228,7 @@ def get_file(url, dataset_name, staging_folder):
             file.write(stream.content)
             
     except requests.exceptions.RequestException as e:
-        logger.error("Error downloading dataset: %s", dataset_name, exc_info=e)
+        _logger.error("Error downloading dataset: %s", dataset_name, exc_info=e)
         raise e
     
     if is_zip:
@@ -205,8 +240,47 @@ def get_file(url, dataset_name, staging_folder):
             #then delete the zip itself
             os.remove(os.path.join(staging_folder, package_name))
         except Exception as e:
-            logger.error("Error unarchiving dataset: %s, file: %s", dataset_name, zipfilename, exc_info=e)
+            _logger.error("Error unarchiving dataset: %s, file: %s", dataset_name, zipfilename, exc_info=e)
             raise e
 
-    logger.debug("Download and extraction complete.")
-    
+    _logger.debug("Download and extraction complete.")
+
+#---------------------------------------------------------------------------------------------------
+# Writes layer statistics for given provider to log file in the log_folder_path
+#---------------------------------------------------------------------------------------------------
+def write_log_file(log_folder_path, provider_name, stats):
+    """
+    Create a log file that describes the data processing steps.
+
+    Parameters:
+        log_folder_path (string)
+            - Location where log file will be stored
+        provider_name (string)
+            - Unique name of data provider (eg. "Mission")
+        stats (dictionary)
+            - Provider processing statistics to write to log file
+            
+    Dependencies 
+        None
+
+    Returns:
+        None
+    """
+
+    log_file_name = f"Change_Detection_Processing_Log_{provider_name}_{rundatetime}.txt"
+    log_file = os.path.join(log_folder_path, log_file_name)
+    log_text = f"""
+Change Detection Processing Log for {provider_name}, {today_date_string}
+       
+COMPARISON BETWEEN ORIGINAL DATA AND PREVIOUS ORIGINAL DATA
+{format_statistics(stats)}  
+    """
+
+    # Create the processing log file and populate it with the log text
+    _logger.debug(f"Writing log file: {log_file}")
+    processing_log = open(log_file, "w")
+    try:
+        processing_log.write(log_text)
+    finally:
+        processing_log.close()
+    _logger.debug(f"Writing log file written")    
